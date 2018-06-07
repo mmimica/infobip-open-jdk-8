@@ -1,0 +1,120 @@
+diff -r 19e857b55028 src/hotspot/share/gc/g1/g1CollectedHeap.cpp
+--- a/src/hotspot/share/gc/g1/g1CollectedHeap.cpp	Mon May 28 03:04:38 2018 -0700
++++ b/src/hotspot/share/gc/g1/g1CollectedHeap.cpp	Thu Jun 07 14:56:05 2018 +0200
+@@ -2170,10 +2170,14 @@
+       full_gc_count_before = total_full_collections();
+       old_marking_count_before = _old_marking_cycles_started;
+     }
+ 
+     if (should_do_concurrent_full_gc(cause)) {
++      if (G1TraceFullGCAllocations && !retry_gc) {
++        trace_allocation(tty, word_size, Thread::current(), "Full GC cause");
++      }
++
+       // Schedule an initial-mark evacuation pause that will start a
+       // concurrent cycle. We're setting word_size to 0 which means that
+       // we are not requesting a post-GC allocation.
+       VM_G1IncCollectionPause op(gc_count_before,
+                                  0,     /* word_size */
+diff -r 19e857b55028 src/hotspot/share/gc/g1/g1_globals.hpp
+--- a/src/hotspot/share/gc/g1/g1_globals.hpp	Mon May 28 03:04:38 2018 -0700
++++ b/src/hotspot/share/gc/g1/g1_globals.hpp	Thu Jun 07 14:56:05 2018 +0200
+@@ -230,10 +230,13 @@
+                                                                             \
+   develop(bool, G1ExitOnExpansionFailure, false,                            \
+           "Raise a fatal VM exit out of memory failure in the event "       \
+           " that heap expansion fails due to running out of swap.")         \
+                                                                             \
++  diagnostic(bool, G1TraceFullGCAllocations, false,                         \
++           "Trace allocations which are causing Full GC.")                  \
++                                                                            \
+   experimental(uintx, G1MaxNewSizePercent, 60,                              \
+           "Percentage (0-100) of the heap size to use as default "          \
+           " maximum young gen size.")                                       \
+           range(0, 100)                                                     \
+           constraint(G1MaxNewSizePercentConstraintFunc,AfterErgo)           \
+diff -r 19e857b55028 src/hotspot/share/gc/shared/collectedHeap.cpp
+--- a/src/hotspot/share/gc/shared/collectedHeap.cpp	Mon May 28 03:04:38 2018 -0700
++++ b/src/hotspot/share/gc/shared/collectedHeap.cpp	Thu Jun 07 14:56:05 2018 +0200
+@@ -521,10 +521,28 @@
+ HeapWord* CollectedHeap::allocate_new_tlab(size_t size) {
+   guarantee(false, "thread-local allocation buffers not supported");
+   return NULL;
+ }
+ 
++void CollectedHeap::trace_allocation(outputStream* st, size_t word_size, Thread* thread, const char *cause) {
++  size_t byte_size = word_size * HeapWordSize;
++  st->date_stamp(true, "", ": ");
++  st->stamp(true, "", ": ");
++  st->print("%s - [Thread %s] Allocating %.1f%s", cause, thread->name(),
++                      byte_size_in_proper_unit((double)byte_size),
++                      proper_unit_for_byte_size(byte_size));
++  if (thread->is_Java_thread()) {
++    st->print_cr(" from Java:");
++    ((JavaThread*)thread)->print_stack_on(st);
++  }
++  else {
++    st->cr();
++  }
++
++  st->flush();
++}
++
+ void CollectedHeap::ensure_parsability(bool retire_tlabs) {
+   // The second disjunct in the assertion below makes a concession
+   // for the start-up verification done while the VM is being
+   // created. Callers be careful that you know that mutators
+   // aren't going to interfere -- for instance, this is permissible
+diff -r 19e857b55028 src/hotspot/share/gc/shared/collectedHeap.hpp
+--- a/src/hotspot/share/gc/shared/collectedHeap.hpp	Mon May 28 03:04:38 2018 -0700
++++ b/src/hotspot/share/gc/shared/collectedHeap.hpp	Thu Jun 07 14:56:05 2018 +0200
+@@ -186,10 +186,13 @@
+   // Fill with a single object (either an int array or a java.lang.Object).
+   static inline void fill_with_object_impl(HeapWord* start, size_t words, bool zap = true);
+ 
+   virtual void trace_heap(GCWhen::Type when, const GCTracer* tracer);
+ 
++  // Dump thread stack-trace and basic information about the allocation
++  static void trace_allocation(outputStream* st, size_t size, Thread* thread, const char *cause);
++
+   // Verification functions
+   virtual void check_for_bad_heap_word_value(HeapWord* addr, size_t size)
+     PRODUCT_RETURN;
+   virtual void check_for_non_bad_heap_word_value(HeapWord* addr, size_t size)
+     PRODUCT_RETURN;
+diff -r 19e857b55028 src/hotspot/share/gc/shared/collectedHeap.inline.hpp
+--- a/src/hotspot/share/gc/shared/collectedHeap.inline.hpp	Mon May 28 03:04:38 2018 -0700
++++ b/src/hotspot/share/gc/shared/collectedHeap.inline.hpp	Thu Jun 07 14:56:05 2018 +0200
+@@ -135,10 +135,14 @@
+   if (HAS_PENDING_EXCEPTION) {
+     NOT_PRODUCT(guarantee(false, "Should not allocate with exception pending"));
+     return NULL;  // caller does a CHECK_0 too
+   }
+ 
++  if (TraceLargerAllocations > 0 && size * HeapWordSize > TraceLargerAllocations) {
++    trace_allocation(tty, size, THREAD, "Large allocation");
++  }
++
+   HeapWord* result = NULL;
+   if (UseTLAB) {
+     result = allocate_from_tlab(klass, THREAD, size);
+     if (result != NULL) {
+       assert(!HAS_PENDING_EXCEPTION,
+diff -r 19e857b55028 src/hotspot/share/runtime/globals.hpp
+--- a/src/hotspot/share/runtime/globals.hpp	Mon May 28 03:04:38 2018 -0700
++++ b/src/hotspot/share/runtime/globals.hpp	Thu Jun 07 14:56:05 2018 +0200
+@@ -1346,10 +1346,14 @@
+                                                                             \
+   product(bool, CrashOnOutOfMemoryError, false,                             \
+           "JVM aborts, producing an error log and core/mini dump, on the "  \
+           "first occurrence of an out-of-memory error")                     \
+                                                                             \
++  diagnostic(uintx, TraceLargerAllocations, 0,                              \
++          "Trace heap allocations larger than the specified size")          \
++                                                                            \
++                                                                            \
+   /* tracing */                                                             \
+                                                                             \
+   develop(bool, StressRewriter, false,                                      \
+           "Stress linktime bytecode rewriting")                             \
+                                                                             \
