@@ -1,24 +1,24 @@
 diff -r 19e857b55028 src/hotspot/share/gc/g1/g1CollectedHeap.cpp
 --- a/src/hotspot/share/gc/g1/g1CollectedHeap.cpp	Mon May 28 03:04:38 2018 -0700
-+++ b/src/hotspot/share/gc/g1/g1CollectedHeap.cpp	Thu Jun 07 14:56:05 2018 +0200
-@@ -2170,10 +2170,14 @@
-       full_gc_count_before = total_full_collections();
-       old_marking_count_before = _old_marking_cycles_started;
++++ b/src/hotspot/share/gc/g1/g1CollectedHeap.cpp	Thu Jun 07 15:13:02 2018 +0200
+@@ -467,10 +467,14 @@
+     }
+     if (result != NULL) {
+       return result;
      }
  
-     if (should_do_concurrent_full_gc(cause)) {
-+      if (G1TraceFullGCAllocations && !retry_gc) {
-+        trace_allocation(tty, word_size, Thread::current(), "Full GC cause");
-+      }
++    if (G1TraceFullGCAllocations && try_count == 1) {
++      trace_allocation(tty, word_size, Thread::current(), "Full GC cause");
++    }
 +
-       // Schedule an initial-mark evacuation pause that will start a
-       // concurrent cycle. We're setting word_size to 0 which means that
-       // we are not requesting a post-GC allocation.
-       VM_G1IncCollectionPause op(gc_count_before,
-                                  0,     /* word_size */
+     // Create the garbage collection operation...
+     VM_G1CollectForAllocation op(gc_count_before, word_size);
+     op.set_allocation_context(AllocationContext::current());
+ 
+     // ...and get the VM thread to execute it.
 diff -r 19e857b55028 src/hotspot/share/gc/g1/g1_globals.hpp
 --- a/src/hotspot/share/gc/g1/g1_globals.hpp	Mon May 28 03:04:38 2018 -0700
-+++ b/src/hotspot/share/gc/g1/g1_globals.hpp	Thu Jun 07 14:56:05 2018 +0200
++++ b/src/hotspot/share/gc/g1/g1_globals.hpp	Thu Jun 07 15:13:02 2018 +0200
 @@ -230,10 +230,13 @@
                                                                              \
    develop(bool, G1ExitOnExpansionFailure, false,                            \
@@ -35,7 +35,7 @@ diff -r 19e857b55028 src/hotspot/share/gc/g1/g1_globals.hpp
            constraint(G1MaxNewSizePercentConstraintFunc,AfterErgo)           \
 diff -r 19e857b55028 src/hotspot/share/gc/shared/collectedHeap.cpp
 --- a/src/hotspot/share/gc/shared/collectedHeap.cpp	Mon May 28 03:04:38 2018 -0700
-+++ b/src/hotspot/share/gc/shared/collectedHeap.cpp	Thu Jun 07 14:56:05 2018 +0200
++++ b/src/hotspot/share/gc/shared/collectedHeap.cpp	Thu Jun 07 15:13:02 2018 +0200
 @@ -521,10 +521,28 @@
  HeapWord* CollectedHeap::allocate_new_tlab(size_t size) {
    guarantee(false, "thread-local allocation buffers not supported");
@@ -67,7 +67,7 @@ diff -r 19e857b55028 src/hotspot/share/gc/shared/collectedHeap.cpp
    // aren't going to interfere -- for instance, this is permissible
 diff -r 19e857b55028 src/hotspot/share/gc/shared/collectedHeap.hpp
 --- a/src/hotspot/share/gc/shared/collectedHeap.hpp	Mon May 28 03:04:38 2018 -0700
-+++ b/src/hotspot/share/gc/shared/collectedHeap.hpp	Thu Jun 07 14:56:05 2018 +0200
++++ b/src/hotspot/share/gc/shared/collectedHeap.hpp	Thu Jun 07 15:13:02 2018 +0200
 @@ -186,10 +186,13 @@
    // Fill with a single object (either an int array or a java.lang.Object).
    static inline void fill_with_object_impl(HeapWord* start, size_t words, bool zap = true);
@@ -84,7 +84,7 @@ diff -r 19e857b55028 src/hotspot/share/gc/shared/collectedHeap.hpp
      PRODUCT_RETURN;
 diff -r 19e857b55028 src/hotspot/share/gc/shared/collectedHeap.inline.hpp
 --- a/src/hotspot/share/gc/shared/collectedHeap.inline.hpp	Mon May 28 03:04:38 2018 -0700
-+++ b/src/hotspot/share/gc/shared/collectedHeap.inline.hpp	Thu Jun 07 14:56:05 2018 +0200
++++ b/src/hotspot/share/gc/shared/collectedHeap.inline.hpp	Thu Jun 07 15:13:02 2018 +0200
 @@ -135,10 +135,14 @@
    if (HAS_PENDING_EXCEPTION) {
      NOT_PRODUCT(guarantee(false, "Should not allocate with exception pending"));
@@ -102,7 +102,7 @@ diff -r 19e857b55028 src/hotspot/share/gc/shared/collectedHeap.inline.hpp
        assert(!HAS_PENDING_EXCEPTION,
 diff -r 19e857b55028 src/hotspot/share/runtime/globals.hpp
 --- a/src/hotspot/share/runtime/globals.hpp	Mon May 28 03:04:38 2018 -0700
-+++ b/src/hotspot/share/runtime/globals.hpp	Thu Jun 07 14:56:05 2018 +0200
++++ b/src/hotspot/share/runtime/globals.hpp	Thu Jun 07 15:13:02 2018 +0200
 @@ -1346,10 +1346,14 @@
                                                                              \
    product(bool, CrashOnOutOfMemoryError, false,                             \
